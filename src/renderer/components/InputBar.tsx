@@ -4,6 +4,8 @@ import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
+import { CommandPalette } from './CommandPalette'
+import { buildCommandRegistry, filterCommands, type PaletteCommand } from '../commandRegistry'
 import { useColors } from '../theme'
 
 const INPUT_MIN_HEIGHT = 20
@@ -24,6 +26,8 @@ export function InputBar() {
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [slashFilter, setSlashFilter] = useState<string | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [paletteQuery, setPaletteQuery] = useState<string | null>(null)
+  const [paletteIndex, setPaletteIndex] = useState(0)
   const [isMultiLine, setIsMultiLine] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -49,6 +53,7 @@ export function InputBar() {
   const canSend = !!tab && !isConnecting && hasContent
   const attachments = tab?.attachments || []
   const showSlashMenu = slashFilter !== null && !isConnecting
+  const showPalette = paletteQuery !== null && !isConnecting
   const skillCommands: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
     command: `/${skill}`,
     description: `Run skill: ${skill}`,
@@ -242,8 +247,31 @@ export function InputBar() {
     executeCommand(cmd)
   }, [executeCommand, tab?.sessionSkills])
 
+  // ─── Palette select ───
+  const handlePaletteSelect = useCallback((cmd: PaletteCommand) => {
+    setPaletteQuery(null)
+    const result = cmd.execute()
+    if (result && typeof result === 'object' && 'prefill' in result) {
+      setInput(result.prefill)
+      requestAnimationFrame(() => {
+        const el = textareaRef.current
+        if (el) { el.focus(); el.selectionStart = el.selectionEnd = result.prefill.length }
+      })
+    } else {
+      setInput('')
+    }
+  }, [])
+
   // ─── Send ───
   const handleSend = useCallback(() => {
+    if (showPalette) {
+      const cmds = buildCommandRegistry()
+      const filtered = filterCommands(paletteQuery!, cmds)
+      if (filtered.length > 0) {
+        handlePaletteSelect(filtered[paletteIndex])
+      }
+      return
+    }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
       if (filtered.length > 0) {
@@ -280,10 +308,20 @@ export function InputBar() {
     sendMessage(prompt || 'See attached files')
     // Refocus after React re-renders from the state update
     requestAnimationFrame(() => textareaRef.current?.focus())
-  }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, slashFilter, slashIndex, handleSlashSelect])
+  }, [input, isBusy, sendMessage, attachments.length, showSlashMenu, slashFilter, slashIndex, handleSlashSelect, showPalette, paletteQuery, paletteIndex, handlePaletteSelect])
 
   // ─── Keyboard ───
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showPalette) {
+      const cmds = buildCommandRegistry()
+      const filtered = filterCommands(paletteQuery!, cmds)
+      if (e.key === 'ArrowDown') { e.preventDefault(); setPaletteIndex((i) => (i + 1) % Math.max(1, filtered.length)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setPaletteIndex((i) => (i - 1 + filtered.length) % Math.max(1, filtered.length)); return }
+      if (e.key === 'Tab') { e.preventDefault(); if (filtered.length > 0) handlePaletteSelect(filtered[paletteIndex]); return }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (filtered.length > 0) handlePaletteSelect(filtered[paletteIndex]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setPaletteQuery(null); setInput(''); return }
+      return
+    }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % filtered.length); return }
@@ -292,12 +330,19 @@ export function InputBar() {
       if (e.key === 'Escape') { e.preventDefault(); setSlashFilter(null); return }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-    if (e.key === 'Escape' && !showSlashMenu) { window.clui.hideWindow() }
+    if (e.key === 'Escape' && !showSlashMenu && !showPalette) { window.clui.hideWindow() }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
     setInput(value)
+    if (value.startsWith('>')) {
+      setPaletteQuery(value.slice(1))
+      setPaletteIndex(0)
+      setSlashFilter(null)
+      return
+    }
+    setPaletteQuery(null)
     updateSlashFilter(value)
   }
 
@@ -377,6 +422,19 @@ export function InputBar() {
 
   return (
     <div ref={wrapperRef} data-clui-ui className="flex flex-col w-full relative">
+      {/* Command palette */}
+      <AnimatePresence>
+        {showPalette && (
+          <CommandPalette
+            query={paletteQuery!}
+            selectedIndex={paletteIndex}
+            onSelect={handlePaletteSelect}
+            onDismiss={() => { setPaletteQuery(null); setInput('') }}
+            anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
+          />
+        )}
+      </AnimatePresence>
+
       {/* Slash command menu */}
       <AnimatePresence>
         {showSlashMenu && (
