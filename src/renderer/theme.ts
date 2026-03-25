@@ -277,12 +277,21 @@ interface ThemeState {
   themeMode: ThemeMode
   soundEnabled: boolean
   expandedUI: boolean
+  /** User-chosen background color override (null = use theme default) */
+  customBgColor: string | null
+  /** User-chosen accent/highlight color override (null = use theme default) */
+  customAccentColor: string | null
+  /** User-chosen font family override (null = use system default) */
+  customFont: string | null
   /** OS-reported dark mode — used when themeMode is 'system' */
   _systemIsDark: boolean
   setIsDark: (isDark: boolean) => void
   setThemeMode: (mode: ThemeMode) => void
   setSoundEnabled: (enabled: boolean) => void
   setExpandedUI: (expanded: boolean) => void
+  setCustomBgColor: (color: string | null) => void
+  setCustomAccentColor: (color: string | null) => void
+  setCustomFont: (font: string | null) => void
   /** Called by OS theme change listener — updates system value */
   setSystemTheme: (isDark: boolean) => void
 }
@@ -300,15 +309,53 @@ function syncTokensToCss(tokens: ColorPalette): void {
   }
 }
 
-function applyTheme(isDark: boolean): void {
+function applyCustomFont(font: string | null): void {
+  document.documentElement.style.setProperty('--clui-font-family', font ?? '')
+  if (font) {
+    document.documentElement.style.fontFamily = font
+  } else {
+    document.documentElement.style.removeProperty('font-family')
+  }
+}
+
+/** Apply custom color overrides on top of the base palette CSS vars */
+function applyCustomOverrides(bgColor: string | null, accentColor: string | null): void {
+  const style = document.documentElement.style
+  if (bgColor) {
+    style.setProperty('--clui-container-bg', bgColor)
+    style.setProperty('--clui-container-bg-collapsed', bgColor)
+    style.setProperty('--clui-input-pill-bg', bgColor)
+  }
+  if (accentColor) {
+    style.setProperty('--clui-accent', accentColor)
+    style.setProperty('--clui-accent-light', `${accentColor}1a`)
+    style.setProperty('--clui-accent-soft', `${accentColor}26`)
+    style.setProperty('--clui-send-bg', accentColor)
+    style.setProperty('--clui-status-running', accentColor)
+    style.setProperty('--clui-status-permission', accentColor)
+    style.setProperty('--clui-input-focus-border', `${accentColor}66`)
+  }
+}
+
+function applyTheme(isDark: boolean, bgColor?: string | null, accentColor?: string | null): void {
   document.documentElement.classList.toggle('dark', isDark)
   document.documentElement.classList.toggle('light', !isDark)
   syncTokensToCss(isDark ? darkColors : lightColors)
+  applyCustomOverrides(bgColor ?? null, accentColor ?? null)
 }
 
 const SETTINGS_KEY = 'clui-settings'
 
-function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean } {
+interface SavedSettings {
+  themeMode: ThemeMode
+  soundEnabled: boolean
+  expandedUI: boolean
+  customBgColor: string | null
+  customAccentColor: string | null
+  customFont: string | null
+}
+
+function loadSettings(): SavedSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (raw) {
@@ -317,65 +364,127 @@ function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expanded
         themeMode: ['light', 'dark'].includes(parsed.themeMode) ? parsed.themeMode : 'dark',
         soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
         expandedUI: typeof parsed.expandedUI === 'boolean' ? parsed.expandedUI : false,
+        customBgColor: typeof parsed.customBgColor === 'string' ? parsed.customBgColor : null,
+        customAccentColor: typeof parsed.customAccentColor === 'string' ? parsed.customAccentColor : null,
+        customFont: typeof parsed.customFont === 'string' ? parsed.customFont : null,
       }
     }
   } catch {}
-  return { themeMode: 'dark', soundEnabled: true, expandedUI: false }
+  return { themeMode: 'dark', soundEnabled: true, expandedUI: false, customBgColor: null, customAccentColor: null, customFont: null }
 }
 
-function saveSettings(s: { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean }): void {
+function saveSettings(s: SavedSettings): void {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)) } catch {}
 }
 
 // Always start in compact UI mode on launch.
 const saved = { ...loadSettings(), expandedUI: false }
 
+/** Helper to build a full SavedSettings from current store state */
+function currentSettings(get: () => ThemeState): SavedSettings {
+  const s = get()
+  return {
+    themeMode: s.themeMode,
+    soundEnabled: s.soundEnabled,
+    expandedUI: s.expandedUI,
+    customBgColor: s.customBgColor,
+    customAccentColor: s.customAccentColor,
+    customFont: s.customFont,
+  }
+}
+
 export const useThemeStore = create<ThemeState>((set, get) => ({
   isDark: saved.themeMode === 'dark' ? true : saved.themeMode === 'light' ? false : true,
   themeMode: saved.themeMode,
   soundEnabled: saved.soundEnabled,
   expandedUI: saved.expandedUI,
+  customBgColor: saved.customBgColor,
+  customAccentColor: saved.customAccentColor,
+  customFont: saved.customFont,
   _systemIsDark: true,
   setIsDark: (isDark) => {
     set({ isDark })
-    applyTheme(isDark)
+    applyTheme(isDark, get().customBgColor, get().customAccentColor)
   },
   setThemeMode: (mode) => {
     const resolved = mode === 'system' ? get()._systemIsDark : mode === 'dark'
     set({ themeMode: mode, isDark: resolved })
-    applyTheme(resolved)
-    saveSettings({ themeMode: mode, soundEnabled: get().soundEnabled, expandedUI: get().expandedUI })
+    applyTheme(resolved, get().customBgColor, get().customAccentColor)
+    saveSettings({ ...currentSettings(get), themeMode: mode })
   },
   setSoundEnabled: (enabled) => {
     set({ soundEnabled: enabled })
-    saveSettings({ themeMode: get().themeMode, soundEnabled: enabled, expandedUI: get().expandedUI })
+    saveSettings({ ...currentSettings(get), soundEnabled: enabled })
   },
   setExpandedUI: (expanded) => {
     set({ expandedUI: expanded })
-    saveSettings({ themeMode: get().themeMode, soundEnabled: get().soundEnabled, expandedUI: expanded })
+    saveSettings({ ...currentSettings(get), expandedUI: expanded })
+  },
+  setCustomBgColor: (color) => {
+    set({ customBgColor: color })
+    applyTheme(get().isDark, color, get().customAccentColor)
+    saveSettings({ ...currentSettings(get), customBgColor: color })
+  },
+  setCustomAccentColor: (color) => {
+    set({ customAccentColor: color })
+    applyTheme(get().isDark, get().customBgColor, color)
+    saveSettings({ ...currentSettings(get), customAccentColor: color })
+  },
+  setCustomFont: (font) => {
+    set({ customFont: font })
+    applyCustomFont(font)
+    saveSettings({ ...currentSettings(get), customFont: font })
   },
   setSystemTheme: (isDark) => {
     set({ _systemIsDark: isDark })
     // Only apply if following system
     if (get().themeMode === 'system') {
       set({ isDark })
-      applyTheme(isDark)
+      applyTheme(isDark, get().customBgColor, get().customAccentColor)
     }
   },
 }))
 
-// Initialize CSS vars with saved theme
+// Initialize CSS vars with saved theme + custom overrides
 syncTokensToCss(saved.themeMode === 'light' ? lightColors : darkColors)
+applyCustomOverrides(saved.customBgColor, saved.customAccentColor)
+applyCustomFont(saved.customFont)
 
-/** Reactive hook — returns the active color palette */
+/** Build a palette with custom overrides merged in */
+function mergeOverrides(base: ColorPalette, bgColor: string | null, accentColor: string | null): ColorPalette {
+  if (!bgColor && !accentColor) return base
+  const merged = { ...base }
+  if (bgColor) {
+    merged.containerBg = bgColor
+    merged.containerBgCollapsed = bgColor
+    merged.inputPillBg = bgColor
+  }
+  if (accentColor) {
+    merged.accent = accentColor
+    merged.accentLight = `${accentColor}1a`
+    merged.accentSoft = `${accentColor}26`
+    merged.sendBg = accentColor
+    merged.sendHover = accentColor
+    merged.statusRunning = accentColor
+    merged.statusPermission = accentColor
+    merged.inputFocusBorder = `${accentColor}66`
+  }
+  return merged
+}
+
+/** Reactive hook — returns the active color palette with custom overrides */
 export function useColors(): ColorPalette {
   const isDark = useThemeStore((s) => s.isDark)
-  return isDark ? darkColors : lightColors
+  const customBgColor = useThemeStore((s) => s.customBgColor)
+  const customAccentColor = useThemeStore((s) => s.customAccentColor)
+  const base = isDark ? darkColors : lightColors
+  return mergeOverrides(base, customBgColor, customAccentColor)
 }
 
 /** Non-reactive getter — use outside React components */
 export function getColors(isDark: boolean): ColorPalette {
-  return isDark ? darkColors : lightColors
+  const { customBgColor, customAccentColor } = useThemeStore.getState()
+  return mergeOverrides(isDark ? darkColors : lightColors, customBgColor, customAccentColor)
 }
 
 // ─── Backward compatibility ───

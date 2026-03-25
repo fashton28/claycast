@@ -1,11 +1,12 @@
 import React, { useEffect, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Paperclip, Camera, HeadCircuit } from '@phosphor-icons/react'
+import { Paperclip, Camera, HeadCircuit, Palette } from '@phosphor-icons/react'
 import { TabStrip } from './components/TabStrip'
 import { ConversationView } from './components/ConversationView'
 import { InputBar } from './components/InputBar'
 import { StatusBar } from './components/StatusBar'
 import { MarketplacePanel } from './components/MarketplacePanel'
+import { CustomizePanel } from './components/CustomizePanel'
 import { PopoverLayerProvider } from './components/PopoverLayer'
 import { useClaudeEvents } from './hooks/useClaudeEvents'
 import { useHealthReconciliation } from './hooks/useHealthReconciliation'
@@ -93,6 +94,7 @@ export default function App() {
 
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const marketplaceOpen = useSessionStore((s) => s.marketplaceOpen)
+  const customizeOpen = useSessionStore((s) => s.customizeOpen)
   const isRunning = activeTabStatus === 'running' || activeTabStatus === 'connecting'
 
   // Layout dimensions — expandedUI widens and heightens the panel
@@ -156,10 +158,45 @@ export default function App() {
             )}
           </AnimatePresence>
 
+          <AnimatePresence initial={false}>
+            {customizeOpen && (
+              <div
+                data-clui-ui
+                style={{
+                  width: 720,
+                  maxWidth: 720,
+                  marginLeft: '50%',
+                  transform: 'translateX(-50%)',
+                  marginBottom: 14,
+                  position: 'relative',
+                  zIndex: 30,
+                }}
+              >
+                <motion.div
+                  initial={{ opacity: 0, y: 14, scale: 0.98 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 10, scale: 0.985 }}
+                  transition={TRANSITION}
+                >
+                  <div
+                    data-clui-ui
+                    className="glass-surface overflow-hidden no-drag"
+                    style={{
+                      borderRadius: 24,
+                      maxHeight: 470,
+                    }}
+                  >
+                    <CustomizePanel />
+                  </div>
+                </motion.div>
+              </div>
+            )}
+          </AnimatePresence>
+
           {/*
             ─── Tabs / message shell ───
-            This always remains the chat shell. The marketplace is a separate
-            panel rendered above it, never inside it.
+            This always remains the chat shell. The marketplace / customize panels
+            are separate overlays rendered above it, never inside it.
           */}
           <motion.div
             data-clui-ui
@@ -231,7 +268,7 @@ export default function App() {
                 >
                   <Camera size={17} />
                 </button>
-                {/* btn-3: Skills (back, leftmost) */}
+                {/* btn-3: Skills */}
                 <button
                   className="stack-btn stack-btn-3 glass-surface"
                   title="Skills & Plugins"
@@ -239,6 +276,14 @@ export default function App() {
                   disabled={isRunning}
                 >
                   <HeadCircuit size={17} />
+                </button>
+                {/* btn-4: Customize (back, leftmost) */}
+                <button
+                  className="stack-btn stack-btn-4 glass-surface"
+                  title="Customize"
+                  onClick={() => useSessionStore.getState().toggleCustomize()}
+                >
+                  <Palette size={17} />
                 </button>
               </div>
             </div>
