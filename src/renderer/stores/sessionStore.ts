@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, IntegrationInfo } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 
@@ -64,6 +64,9 @@ interface State {
   // Customize panel
   customizeOpen: boolean
 
+  // Integrations
+  connectedIntegrations: IntegrationInfo[]
+
   // Marketplace state
   marketplaceOpen: boolean
   marketplaceCatalog: CatalogPlugin[]
@@ -85,6 +88,7 @@ interface State {
   toggleExpanded: () => void
   toggleCustomize: () => void
   closeCustomize: () => void
+  refreshIntegrations: () => Promise<void>
   toggleMarketplace: () => void
   closeMarketplace: () => void
   loadMarketplace: (forceRefresh?: boolean) => Promise<void>
@@ -164,6 +168,9 @@ export const useSessionStore = create<State>((set, get) => ({
 
   // Customize
   customizeOpen: false,
+
+  // Integrations
+  connectedIntegrations: [],
 
   // Marketplace
   marketplaceOpen: false,
@@ -276,6 +283,13 @@ export const useSessionStore = create<State>((set, get) => ({
 
   closeCustomize: () => {
     set({ customizeOpen: false })
+  },
+
+  refreshIntegrations: async () => {
+    try {
+      const integrations = await window.clui.listIntegrations()
+      set({ connectedIntegrations: integrations })
+    } catch {}
   },
 
   toggleMarketplace: () => {

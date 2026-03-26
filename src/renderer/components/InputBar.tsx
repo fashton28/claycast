@@ -4,6 +4,7 @@ import { Microphone, ArrowUp, SpinnerGap, X, Check } from '@phosphor-icons/react
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
+import { AtCommandMenu, getFilteredAtCommands, buildAtCommands, type AtCommand } from './AtCommandMenu'
 import { CommandPalette } from './CommandPalette'
 import { buildCommandRegistry, filterCommands, type PaletteCommand } from '../commandRegistry'
 import { useColors } from '../theme'
@@ -26,6 +27,9 @@ export function InputBar() {
   const [voiceError, setVoiceError] = useState<string | null>(null)
   const [slashFilter, setSlashFilter] = useState<string | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [atFilter, setAtFilter] = useState<string | null>(null)
+  const [atIndex, setAtIndex] = useState(0)
+  const [atCommands, setAtCommands] = useState<AtCommand[]>([])
   const [paletteQuery, setPaletteQuery] = useState<string | null>(null)
   const [paletteIndex, setPaletteIndex] = useState(0)
   const [isMultiLine, setIsMultiLine] = useState(false)
@@ -52,6 +56,7 @@ export function InputBar() {
   const hasContent = input.trim().length > 0 || (tab?.attachments?.length ?? 0) > 0
   const canSend = !!tab && !isConnecting && hasContent
   const attachments = tab?.attachments || []
+  const showAtMenu = atFilter !== null && !isConnecting
   const showSlashMenu = slashFilter !== null && !isConnecting
   const showPalette = paletteQuery !== null && !isConnecting
   const skillCommands: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
@@ -59,6 +64,29 @@ export function InputBar() {
     description: `Run skill: ${skill}`,
     icon: <span className="text-[11px]">✦</span>,
   }))
+
+  // Load @ commands from integrations registry
+  useEffect(() => {
+    let cancelled = false
+    const loadAtCommands = async () => {
+      try {
+        const [commands, integrations] = await Promise.all([
+          window.clui.getAtCommands(),
+          window.clui.listIntegrations(),
+        ])
+        if (cancelled) return
+        const connectedIds = new Set(integrations.filter((i) => i.connected).map((i) => i.id))
+        setAtCommands(buildAtCommands(commands, connectedIds))
+      } catch {}
+    }
+    loadAtCommands()
+
+    // Refresh when integration status changes
+    const unsub = window.clui.onIntegrationStatus(() => {
+      loadAtCommands()
+    })
+    return () => { cancelled = true; unsub() }
+  }, [])
 
   useEffect(() => {
     textareaRef.current?.focus()
@@ -151,6 +179,18 @@ export function InputBar() {
     }
   }, [])
 
+  // ─── @ command detection ───
+  const updateAtFilter = useCallback((value: string) => {
+    // Match @word at start of input (autocomplete trigger)
+    const match = value.match(/^(@[a-zA-Z]*)$/)
+    if (match) {
+      setAtFilter(match[1])
+      setAtIndex(0)
+    } else {
+      setAtFilter(null)
+    }
+  }, [])
+
   // ─── Slash command detection ───
   const updateSlashFilter = useCallback((value: string) => {
     const match = value.match(/^(\/[a-zA-Z-]*)$/)
@@ -234,6 +274,37 @@ export function InputBar() {
     }
   }, [tab, clearTab, addSystemMessage, staticInfo, preferredModel])
 
+  // ─── Handle @ command select ───
+  const handleAtSelect = useCallback((cmd: AtCommand) => {
+    // If the input is just the trigger (e.g. "@calendar"), fill it in and let user add more
+    // If user already typed more after the trigger, execute immediately
+    const currentInput = input.trim()
+    const triggerOnly = `@${cmd.trigger}`
+
+    if (currentInput === triggerOnly || currentInput.length <= triggerOnly.length + 1) {
+      // Just the trigger — fill in and keep typing
+      setInput(`@${cmd.trigger} `)
+      setAtFilter(null)
+      requestAnimationFrame(() => textareaRef.current?.focus())
+      return
+    }
+
+    // Has content after trigger — execute
+    setAtFilter(null)
+    setInput('')
+    const rawInput = currentInput.replace(/^@\w+\s*/, '')
+
+    // Add user message to chat
+    addSystemMessage(`@${cmd.trigger} ${rawInput}`)
+
+    // Execute via IPC
+    window.clui.executeAtCommand(cmd.trigger, rawInput).then((result) => {
+      addSystemMessage(result.message)
+    }).catch((err: Error) => {
+      addSystemMessage(`Failed: ${err.message}`)
+    })
+  }, [input, addSystemMessage])
+
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
     const isSkillCommand = !!tab?.sessionSkills?.includes(cmd.command.replace(/^\//, ''))
     if (isSkillCommand) {
@@ -272,10 +343,35 @@ export function InputBar() {
       }
       return
     }
+    if (showAtMenu) {
+      const filtered = getFilteredAtCommands(atFilter!, atCommands)
+      if (filtered.length > 0) {
+        handleAtSelect(filtered[atIndex])
+        return
+      }
+    }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
       if (filtered.length > 0) {
         handleSlashSelect(filtered[slashIndex])
+        return
+      }
+    }
+    // ─── @ command execution (full input like "@schedule lunch tomorrow") ───
+    const atMatch = input.trim().match(/^@(\w+)\s+(.+)$/s)
+    if (atMatch) {
+      const [, trigger, rawInput] = atMatch
+      const cmd = atCommands.find((c) => c.trigger === trigger)
+      if (cmd) {
+        setInput('')
+        setAtFilter(null)
+        addSystemMessage(`@${trigger} ${rawInput}`)
+        window.clui.executeAtCommand(trigger, rawInput).then((result) => {
+          addSystemMessage(result.message)
+        }).catch((err: Error) => {
+          addSystemMessage(`Failed: ${err.message}`)
+        })
+        requestAnimationFrame(() => textareaRef.current?.focus())
         return
       }
     }
@@ -322,6 +418,15 @@ export function InputBar() {
       if (e.key === 'Escape') { e.preventDefault(); setPaletteQuery(null); setInput(''); return }
       return
     }
+    if (showAtMenu) {
+      const filtered = getFilteredAtCommands(atFilter!, atCommands)
+      if (e.key === 'ArrowDown') { e.preventDefault(); setAtIndex((i) => (i + 1) % Math.max(1, filtered.length)); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setAtIndex((i) => (i - 1 + filtered.length) % Math.max(1, filtered.length)); return }
+      if (e.key === 'Tab') { e.preventDefault(); if (filtered.length > 0) handleAtSelect(filtered[atIndex]); return }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (filtered.length > 0) handleAtSelect(filtered[atIndex]); return }
+      if (e.key === 'Escape') { e.preventDefault(); setAtFilter(null); return }
+      return
+    }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % filtered.length); return }
@@ -343,6 +448,13 @@ export function InputBar() {
       return
     }
     setPaletteQuery(null)
+    // Check for @ commands before slash commands
+    if (value.startsWith('@')) {
+      updateAtFilter(value)
+      setSlashFilter(null)
+      return
+    }
+    setAtFilter(null)
     updateSlashFilter(value)
   }
 
@@ -431,6 +543,19 @@ export function InputBar() {
             onSelect={handlePaletteSelect}
             onDismiss={() => { setPaletteQuery(null); setInput('') }}
             anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* @ command menu */}
+      <AnimatePresence>
+        {showAtMenu && (
+          <AtCommandMenu
+            filter={atFilter!}
+            selectedIndex={atIndex}
+            onSelect={handleAtSelect}
+            anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
+            commands={atCommands}
           />
         )}
       </AnimatePresence>

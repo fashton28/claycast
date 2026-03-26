@@ -294,6 +294,35 @@ export interface CatalogPlugin {
   isSkillMd: boolean      // true = individual SKILL.md (direct install), false = CLI plugin (bundle install)
 }
 
+// ─── Integration Types ───
+
+export interface IntegrationCommandInfo {
+  trigger: string
+  description: string
+  integration: string
+  examples: string[]
+}
+
+export interface IntegrationInfo {
+  id: string
+  name: string
+  description: string
+  connected: boolean
+  commands: IntegrationCommandInfo[]
+}
+
+export interface CommandResult {
+  success: boolean
+  message: string
+  data?: unknown
+}
+
+export interface IntegrationStatusEvent {
+  integrationId: string
+  connected: boolean
+  error?: string
+}
+
 // ─── IPC Channel Names ───
 
 export const IPC = {
@@ -357,6 +386,14 @@ export const IPC = {
 
   // Permission mode
   SET_PERMISSION_MODE: 'clui:set-permission-mode',
+
+  // Integrations
+  INTEGRATIONS_LIST: 'clui:integrations-list',
+  INTEGRATION_CONNECT: 'clui:integration-connect',
+  INTEGRATION_DISCONNECT: 'clui:integration-disconnect',
+  INTEGRATION_EXECUTE: 'clui:integration-execute',
+  INTEGRATION_STATUS: 'clui:integration-status',
+  INTEGRATION_COMMANDS: 'clui:integration-commands',
 
   // Legacy (kept for backward compat during migration)
   STREAM_EVENT: 'clui:stream-event',

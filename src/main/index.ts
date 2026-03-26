@@ -6,6 +6,8 @@ import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
+import { IntegrationRegistry } from './integrations/registry'
+import { GoogleIntegration } from './integrations/google/index'
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { IPC } from '../shared/types'
@@ -27,6 +29,13 @@ let toggleSequence = 0
 const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
 
 const controlPlane = new ControlPlane(INTERACTIVE_PTY)
+const integrationRegistry = new IntegrationRegistry()
+integrationRegistry.register(new GoogleIntegration())
+
+// Wire integration status events → renderer
+integrationRegistry.on('status', (event) => {
+  broadcast(IPC.INTEGRATION_STATUS, event)
+})
 
 // Keep native width fixed to avoid renderer animation vs setBounds race.
 // The UI itself still launches in compact mode; extra width is transparent/click-through.
@@ -977,6 +986,31 @@ ipcMain.handle(IPC.MARKETPLACE_INSTALL, async (_event, { repo, pluginName, marke
 ipcMain.handle(IPC.MARKETPLACE_UNINSTALL, async (_event, { pluginName }: { pluginName: string }) => {
   log(`IPC MARKETPLACE_UNINSTALL: ${pluginName}`)
   return uninstallPlugin(pluginName)
+})
+
+// ─── Integrations IPC ───
+
+ipcMain.handle(IPC.INTEGRATIONS_LIST, () => {
+  return integrationRegistry.listIntegrations()
+})
+
+ipcMain.handle(IPC.INTEGRATION_COMMANDS, () => {
+  return integrationRegistry.getCommands()
+})
+
+ipcMain.handle(IPC.INTEGRATION_CONNECT, async (_event, id: string) => {
+  log(`IPC INTEGRATION_CONNECT: ${id}`)
+  return integrationRegistry.connect(id)
+})
+
+ipcMain.handle(IPC.INTEGRATION_DISCONNECT, async (_event, id: string) => {
+  log(`IPC INTEGRATION_DISCONNECT: ${id}`)
+  return integrationRegistry.disconnect(id)
+})
+
+ipcMain.handle(IPC.INTEGRATION_EXECUTE, async (_event, { trigger, rawInput }: { trigger: string; rawInput: string }) => {
+  log(`IPC INTEGRATION_EXECUTE: @${trigger}`)
+  return integrationRegistry.executeCommand(trigger, rawInput)
 })
 
 // ─── Theme Detection ───

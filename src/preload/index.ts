@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, IntegrationInfo, IntegrationCommandInfo, CommandResult, IntegrationStatusEvent } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -33,6 +33,14 @@ export interface CluiAPI {
   setPermissionMode(mode: string): void
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
+
+  // ─── Integrations ───
+  listIntegrations(): Promise<IntegrationInfo[]>
+  connectIntegration(id: string): Promise<{ ok: boolean; error?: string }>
+  disconnectIntegration(id: string): Promise<{ ok: boolean; error?: string }>
+  executeAtCommand(trigger: string, rawInput: string): Promise<CommandResult>
+  getAtCommands(): Promise<IntegrationCommandInfo[]>
+  onIntegrationStatus(callback: (status: IntegrationStatusEvent) => void): () => void
 
   // ─── Window management ───
   resizeHeight(height: number): void
@@ -88,6 +96,18 @@ const api: CluiAPI = {
     const handler = (_e: Electron.IpcRendererEvent, isDark: boolean) => callback(isDark)
     ipcRenderer.on(IPC.THEME_CHANGED, handler)
     return () => ipcRenderer.removeListener(IPC.THEME_CHANGED, handler)
+  },
+
+  // ─── Integrations ───
+  listIntegrations: () => ipcRenderer.invoke(IPC.INTEGRATIONS_LIST),
+  connectIntegration: (id) => ipcRenderer.invoke(IPC.INTEGRATION_CONNECT, id),
+  disconnectIntegration: (id) => ipcRenderer.invoke(IPC.INTEGRATION_DISCONNECT, id),
+  executeAtCommand: (trigger, rawInput) => ipcRenderer.invoke(IPC.INTEGRATION_EXECUTE, { trigger, rawInput }),
+  getAtCommands: () => ipcRenderer.invoke(IPC.INTEGRATION_COMMANDS),
+  onIntegrationStatus: (callback) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: IntegrationStatusEvent) => callback(status)
+    ipcRenderer.on(IPC.INTEGRATION_STATUS, handler)
+    return () => ipcRenderer.removeListener(IPC.INTEGRATION_STATUS, handler)
   },
 
   // ─── Window management ───
